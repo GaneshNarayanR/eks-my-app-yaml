@@ -1,0 +1,225 @@
+# Persistent Volume for Stateful Application
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: myappcustom-pv
+spec:
+  capacity:
+    storage: 10Gi  # Define storage size
+  accessModes:
+    - ReadWriteOnce  # Access mode
+  hostPath:  # Change this to the appropriate storage backend
+    path: /data/myappcustom  # Change path as needed
+---
+# Persistent Volume Claim for Stateful Application
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: myappcustom-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce  # Access mode
+  resources:
+    requests:
+      storage: 10Gi  # Request storage size
+---
+# Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: myappcustom-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: myappcustom
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: frontend
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              role: backend
+---
+# Istio Ingress Gateway
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: myappcustom-gateway
+spec:
+  selector:
+    istio: ingressgateway  # Use Istio's built-in gateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+---
+# Kong API Proxy Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kong
+  template:
+    metadata:
+      labels:
+        app: kong
+    spec:
+      containers:
+      - name: kong
+        image: kong:latest  # Use the official Kong image; update if using a custom one
+        ports:
+        - containerPort: 8000
+        env:
+        - name: KONG_DATABASE
+          value: "off"  # Use DB-less mode for Kong
+        - name: KONG_PORT_MAPS
+          value: "80:80,443:443"
+---
+# Kong API Proxy Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8000
+  selector:
+    app: kong
+---
+# MySQL Database Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.7  # MySQL image from Docker Hub
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "my-secret-pw"
+        - name: MYSQL_DATABASE
+          value: "myapp"
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - mountPath: /var/lib/mysql
+          name: mysql-storage
+      volumes:
+      - name: mysql-storage
+        persistentVolumeClaim:
+          claimName: myappcustom-pvc
+---
+# MySQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+spec:
+  ports:
+  - port: 3306
+  selector:
+    app: mysql
+---
+# Stateful My Custom Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myappcustom
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myappcustom
+  template:
+    metadata:
+      labels:
+        app: myappcustom
+    spec:
+      containers:
+      - name: myappcustom
+        image: <your-repo-url>/myappcustom:latest  # Replace with your repo URL
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DATABASE_URL
+          value: "mysql://root:my-secret-pw@mysql:3306/myapp"  # Connection to MySQL
+        volumeMounts:
+        - mountPath: /app/data
+          name: myappcustom-storage
+      volumes:
+      - name: myappcustom-storage
+        persistentVolumeClaim:
+          claimName: myappcustom-pvc
+---
+# My Custom Application Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: myappcustom
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: myappcustom
+---
+# Stateless My Custom Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myappcustom-stateless
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myappcustom-stateless
+  template:
+    metadata:
+      labels:
+        app: myappcustom-stateless
+    spec:
+      containers:
+      - name: myappcustom-stateless
+        image: <your-repo-url>/myappcustom-stateless:latest  # Replace with your repo URL
+        ports:
+        - containerPort: 8081  # Change port as needed
+        env:
+        - name: DATABASE_URL
+          value: "mysql://root:my-secret-pw@mysql:3306/myapp"  # Connection to MySQL
+---
+# Stateless My Custom Application Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: myappcustom-stateless
+spec:
+  ports:
+  - port: 8081
+    targetPort: 8081
+  selector:
+    app: myappcustom-stateless
